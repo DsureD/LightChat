@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { ChevronDown, LogOut, MessageSquare, PanelLeftClose, PanelLeftOpen, Plus, Send, Settings, Sparkles, Square, Trash2 } from "@/components/icons";
+import { Check, ChevronDown, Copy, LogOut, MessageSquare, PanelLeftClose, PanelLeftOpen, PencilLine, Plus, RefreshCcw, Send, Settings, Sparkles, Square, Trash2 } from "@/components/icons";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { useConfirm } from "@/components/ConfirmDialog";
 import type { ChatMessageDto, ConversationDto, PublicModel } from "@/lib/types";
@@ -98,6 +98,13 @@ function scrollElementIntoView(element: HTMLElement | null) {
   element.scrollIntoView({ block: "end" });
 }
 
+function formatDateShort(dateString: string) {
+  const date = new Date(dateString);
+  const month = date.getMonth() + 1;
+  const day = date.getDate();
+  return `${month}月${day}日`;
+}
+
 function Avatar() {
   return (
     <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-accent text-accent-ink shadow-sm">
@@ -106,24 +113,159 @@ function Avatar() {
   );
 }
 
-function MessageBubble({ message }: { message: LocalMessage }) {
+function CodeBlock({ children, className }: { children: string; className?: string }) {
+  const [copied, setCopied] = useState(false);
+  const language = className?.replace(/language-/, "") || "";
+
+  const handleCopy = () => {
+    navigator.clipboard.writeText(children);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  return (
+    <div className="code-block-wrapper group relative my-3">
+      <div className="flex items-center justify-between rounded-t-lg bg-[#2d2d2d] px-3 py-1.5">
+        <span className="text-xs text-gray-400">{language || "text"}</span>
+        <button
+          onClick={handleCopy}
+          className="flex items-center gap-1 rounded px-2 py-1 text-xs text-gray-400 transition hover:bg-white/10 hover:text-gray-200"
+          title="复制代码"
+        >
+          {copied ? (
+            <>
+              <Check className="h-3 w-3" />
+              <span>已复制</span>
+            </>
+          ) : (
+            <>
+              <Copy className="h-3 w-3" />
+              <span>复制</span>
+            </>
+          )}
+        </button>
+      </div>
+      <pre className="code-block-pre !m-0 !rounded-t-none !rounded-b-lg !border-0">
+        <code className={className}>{children}</code>
+      </pre>
+    </div>
+  );
+}
+
+function MessageBubble({
+  message,
+  onEdit,
+  onRegenerate,
+  onCopy
+}: {
+  message: LocalMessage;
+  onEdit?: (messageId: string, content: string) => void;
+  onRegenerate?: (messageId: string) => void;
+  onCopy?: (content: string) => void;
+}) {
+  const [isEditing, setIsEditing] = useState(false);
+  const [editContent, setEditContent] = useState(message.content);
+  const [copied, setCopied] = useState(false);
+  const [imgError, setImgError] = useState(false);
   const isUser = message.role === "user";
-  const imageSrc = message.imageUrl || (message.imageBase64 ? `data:image/png;base64,${message.imageBase64}` : "");
+
+  // 图片加载失败时降级到 base64
+  const imageSrc = (!imgError && message.imageUrl) || (message.imageBase64 ? `data:image/png;base64,${message.imageBase64}` : "");
+  // 下载源也要跟随降级逻辑
+  const downloadSrc = (!imgError && message.imageUrl) || (message.imageBase64 ? `data:image/png;base64,${message.imageBase64}` : "");
+
+  const handleEditSubmit = () => {
+    const trimmed = editContent.trim();
+    if (trimmed && trimmed !== message.content && onEdit) {
+      onEdit(message.id, trimmed);
+      setIsEditing(false);
+    }
+  };
+
+  const handleCopy = () => {
+    if (onCopy) {
+      onCopy(message.content);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }
+  };
 
   if (isUser) {
     return (
-      <div className="flex animate-fade-in-up justify-end">
-        <div className="max-w-[82%] rounded-2xl rounded-br-md bg-bubble px-4 py-2.5 text-[15px] leading-7 text-ink">
-          <div className="prose-chat whitespace-pre-wrap break-words">{message.content}</div>
+      <div className="group flex animate-fade-in-up justify-end">
+        <div className="relative max-w-[82%]">
+          {!isEditing ? (
+            <>
+              <div className="rounded-2xl rounded-br-md bg-bubble px-4 py-2.5 text-[15px] leading-7 text-ink">
+                <div className="prose-chat whitespace-pre-wrap break-words">{message.content}</div>
+              </div>
+              <div className="mt-1 flex items-center justify-end gap-1">
+                {!message.pending && onEdit ? (
+                  <button
+                    onClick={() => {
+                      setEditContent(message.content);
+                      setIsEditing(true);
+                    }}
+                    className="rounded-lg p-1.5 text-muted opacity-0 transition hover:bg-ink/[0.06] hover:text-ink group-hover:opacity-100"
+                    title="编辑"
+                  >
+                    <PencilLine className="h-3.5 w-3.5" />
+                  </button>
+                ) : null}
+                {!message.pending && onCopy ? (
+                  <button
+                    onClick={handleCopy}
+                    className="rounded-lg p-1.5 text-muted opacity-0 transition hover:bg-ink/[0.06] hover:text-ink group-hover:opacity-100"
+                    title={copied ? "已复制" : "复制"}
+                  >
+                    {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+                  </button>
+                ) : null}
+              </div>
+            </>
+          ) : (
+            <div className="rounded-2xl border-2 border-accent/40 bg-card p-3">
+              <textarea
+                className="w-full resize-none border-0 bg-transparent text-[15px] leading-7 text-ink outline-none"
+                rows={3}
+                value={editContent}
+                onChange={(e) => setEditContent(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault();
+                    handleEditSubmit();
+                  }
+                  if (e.key === "Escape") {
+                    setIsEditing(false);
+                  }
+                }}
+                autoFocus
+              />
+              <div className="mt-2 flex gap-2">
+                <button
+                  onClick={handleEditSubmit}
+                  className="rounded-lg bg-accent px-3 py-1.5 text-xs font-medium text-accent-ink transition hover:bg-accent/90"
+                >
+                  发送
+                </button>
+                <button
+                  onClick={() => setIsEditing(false)}
+                  className="rounded-lg border border-line bg-card px-3 py-1.5 text-xs font-medium text-ink/70 transition hover:bg-ink/[0.04]"
+                >
+                  取消
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       </div>
     );
   }
 
   return (
-    <div className="flex animate-fade-in-up gap-3">
+    <div className="group flex animate-fade-in-up gap-3">
       <Avatar />
-      <div className="min-w-0 flex-1 pt-0.5 text-[15px] leading-7 text-ink/90">
+      <div className="min-w-0 flex-1 pt-0.5">
         {message.modelName ? (
           <p className="mb-1.5 flex items-center gap-1.5 text-xs font-medium text-muted">
             <span className="inline-block h-1.5 w-1.5 rounded-full bg-accent/60" />
@@ -133,18 +275,117 @@ function MessageBubble({ message }: { message: LocalMessage }) {
         {imageSrc ? (
           <div className="mb-3 space-y-2">
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img className="max-h-[32rem] rounded-2xl border border-line object-contain" src={imageSrc} alt={message.content || "generated image"} />
-            <a className="inline-flex rounded-xl border border-line bg-card px-3 py-1.5 text-xs font-medium text-ink/80 transition hover:bg-ink/[0.04]" href={imageSrc} download>
+            <img
+              className="max-h-[32rem] rounded-2xl border border-line object-contain"
+              src={imageSrc}
+              alt={message.content || "generated image"}
+              onError={() => setImgError(true)}
+            />
+            <a
+              className="inline-flex rounded-xl border border-line bg-card px-3 py-1.5 text-xs font-medium text-ink/80 transition hover:bg-ink/[0.04]"
+              href={downloadSrc}
+              download="generated-image.png"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
               下载图片
             </a>
           </div>
         ) : null}
-        {message.content ? <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown> : null}
+        {message.content ? (
+          <div className="prose-chat text-[15px] leading-7 text-ink/90">
+            <ReactMarkdown
+              remarkPlugins={[remarkGfm]}
+              components={{
+                code(props) {
+                  const { className, children } = props;
+                  const content = String(children).replace(/\n$/, "");
+                  // @ts-expect-error - inline is a custom prop from react-markdown
+                  const inline = props.inline;
+
+                  // 明确判断是否为内联代码
+                  if (inline || !content.includes('\n')) {
+                    return (
+                      <code className={className}>
+                        {children}
+                      </code>
+                    );
+                  }
+
+                  // 多行代码块
+                  return <CodeBlock className={className}>{content}</CodeBlock>;
+                },
+                p(props) {
+                  const { children } = props;
+                  const node = props.node;
+                  // 检查子元素中是否包含代码块，如果是则不使用 <p> 包裹
+                  const hasCodeBlock = node?.children?.some(
+                    (child) =>
+                      child.type === 'element' &&
+                      child.tagName === 'code' &&
+                      child.properties?.className
+                  );
+
+                  if (hasCodeBlock) {
+                    return <div className="my-2">{children}</div>;
+                  }
+
+                  return <p>{children}</p>;
+                },
+                table({ children }) {
+                  return (
+                    <div className="my-4 overflow-x-auto">
+                      <table>{children}</table>
+                    </div>
+                  );
+                },
+                pre({ children }) {
+                  return <>{children}</>;
+                }
+              }}
+            >
+              {message.content}
+            </ReactMarkdown>
+          </div>
+        ) : null}
         {message.pending && !message.content ? (
           <span className="inline-flex items-center gap-2 text-muted">
             <span className="inline-block h-2 w-2 animate-blink rounded-full bg-accent/70" />
             正在思考...
           </span>
+        ) : null}
+        {!message.pending && message.content ? (
+          <div className="mt-2 flex items-center gap-1">
+            {onCopy ? (
+              <button
+                onClick={handleCopy}
+                className="inline-flex items-center gap-1.5 rounded-lg px-2 py-1 text-xs font-medium text-muted transition hover:bg-ink/[0.04] hover:text-ink"
+                title={copied ? "已复制" : "复制"}
+              >
+                {copied ? (
+                  <>
+                    <Check className="h-3.5 w-3.5" />
+                    <span>已复制</span>
+                  </>
+                ) : (
+                  <>
+                    <Copy className="h-3.5 w-3.5" />
+                    <span>复制</span>
+                  </>
+                )}
+              </button>
+            ) : null}
+            {onRegenerate ? (
+              <button
+                onClick={() => onRegenerate(message.id)}
+                className="inline-flex items-center gap-1.5 rounded-lg px-2 py-1 text-xs font-medium text-muted transition hover:bg-ink/[0.04] hover:text-ink"
+                title="重新生成"
+              >
+                <RefreshCcw className="h-3.5 w-3.5" />
+                <span>重新生成</span>
+              </button>
+            ) : null}
+          </div>
         ) : null}
       </div>
     </div>
@@ -359,6 +600,44 @@ export function ChatClient({ username }: { username: string }) {
     }
   }
 
+  async function handleEditMessage(messageId: string, newContent: string) {
+    // 找到该消息的索引
+    const messageIndex = messages.findIndex((msg) => msg.id === messageId);
+    if (messageIndex === -1) return;
+
+    // 删除该消息及之后的所有消息
+    setMessages((currentMessages) => currentMessages.slice(0, messageIndex));
+
+    // 以新内容重新发送
+    await sendChatMessage(newContent);
+  }
+
+  async function handleRegenerateMessage(messageId: string) {
+    // 找到该 AI 消息的索引
+    const messageIndex = messages.findIndex((msg) => msg.id === messageId);
+    if (messageIndex === -1 || messageIndex === 0) return;
+
+    // 找到上一条用户消息
+    const previousUserMessage = messages
+      .slice(0, messageIndex)
+      .reverse()
+      .find((msg) => msg.role === "user");
+
+    if (!previousUserMessage) return;
+
+    // 删除当前 AI 消息及之后的所有消息
+    setMessages((currentMessages) => currentMessages.slice(0, messageIndex));
+
+    // 用上一条用户消息重新生成
+    await sendChatMessage(previousUserMessage.content);
+  }
+
+  function handleCopyMessage(content: string) {
+    navigator.clipboard.writeText(content).catch(() => {
+      setError("复制失败，请手动选择复制。");
+    });
+  }
+
   async function sendImageMessage(prompt: string) {
     const userMessage = localMessage("user", prompt);
     const assistantMessage = localMessage("assistant", "正在生成图片...");
@@ -489,7 +768,9 @@ export function ChatClient({ username }: { username: string }) {
                   <div key={conversation.id} className={`group relative rounded-xl transition-colors ${active ? "bg-accent/10" : "hover:bg-ink/[0.04]"}`}>
                     <button className="block w-full px-3 py-2 pr-9 text-left" onClick={() => loadConversation(conversation.id)}>
                       <span className={`block truncate text-sm ${active ? "font-medium text-ink" : "text-ink/90"}`}>{conversation.title}</span>
-                      <span className="mt-0.5 block truncate text-xs text-muted">{conversation.modelName || "未选择模型"}</span>
+                      <span className="mt-0.5 block truncate text-xs text-muted">
+                        {formatDateShort(conversation.createdAt)} · {conversation.modelName || "未选择模型"}
+                      </span>
                     </button>
                     <button
                       className="absolute right-1.5 top-1/2 -translate-y-1/2 rounded-lg p-1.5 text-muted opacity-0 transition hover:bg-ink/[0.06] hover:text-red-500 group-hover:opacity-100"
@@ -679,7 +960,13 @@ export function ChatClient({ username }: { username: string }) {
 
                 <div className="space-y-6">
                   {messages.map((message) => (
-                    <MessageBubble key={message.id} message={message} />
+                    <MessageBubble
+                      key={message.id}
+                      message={message}
+                      onEdit={message.role === "user" && !isStreaming ? handleEditMessage : undefined}
+                      onRegenerate={message.role === "assistant" && !isStreaming ? handleRegenerateMessage : undefined}
+                      onCopy={!isStreaming ? handleCopyMessage : undefined}
+                    />
                   ))}
                 </div>
                 <div ref={bottomRef} className="h-4" />
